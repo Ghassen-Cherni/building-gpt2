@@ -4,6 +4,7 @@ from math import sqrt
 from dataclasses import dataclass
 from torch.utils.data import Dataset
 import tiktoken
+from torch.nn import functional as F
 
 class MaskedMultiHeadAttention(nn.Module):
     def __init__(self, config):
@@ -24,10 +25,16 @@ class MaskedMultiHeadAttention(nn.Module):
         k = k.view(B, T, self.n_heads, -1).transpose(1, 2)
         v = v.view(B, T, self.n_heads, -1).transpose(1, 2)
 
-        scores = q @ k.transpose(-2, -1) / sqrt(k.shape[-1])
-        self.mask = self.mask.to(x_embedded.device)
-        attention_score = torch.softmax(scores.masked_fill(self.mask[:T, :T], float("-inf")), dim=-1)
-        out = (attention_score @ v).transpose(1, 2).reshape(B, T, C)
+        # scores = q @ k.transpose(-2, -1) / sqrt(k.shape[-1])
+        # self.mask = self.mask.to(x_embedded.device)
+        # attention_score = torch.softmax(scores.masked_fill(self.mask[:T, :T], float("-inf")), dim=-1)
+        
+        out = F.scaled_dot_product_attention(
+            q, k, v,
+            is_causal=True,
+            dropout_p=0.0,
+        ).transpose(1, 2).reshape(B, T, C)
+        #out = (attention_score @ v).transpose(1, 2).reshape(B, T, C)
         out = self.c_proj(out)
         return out
 
