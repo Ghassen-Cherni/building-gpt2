@@ -5,6 +5,10 @@ from dataclasses import dataclass
 from torch.utils.data import Dataset
 import tiktoken
 from torch.nn import functional as F
+from pathlib import Path
+from bisect import bisect_right
+import numpy as np
+
 
 class MaskedMultiHeadAttention(nn.Module):
     def __init__(self, config):
@@ -127,3 +131,46 @@ class Dataset(Dataset):
         data = self.dataset[idx][:-1]
         label = self.dataset[idx][1:]
         return data, label
+
+
+
+class ShardDataset(torch.utils.data.Dataset):
+    def __init__(self, data_dir, sentence_size=1024, split="train"):
+        self.T = sentence_size
+        self.paths = sorted(
+            Path(data_dir).glob(f"edufineweb_{split}_*.npy")
+        )
+        if not self.paths:
+            raise FileNotFoundError(f"No {split} shards found in {data_dir}")
+
+        self.ends = []
+        total = 0
+        for path in self.paths:
+            tokens = np.load(path, mmap_mode="r")
+            total += max(0, (len(tokens) - 1) // self.T)
+            self.ends.append(total)
+
+        self.current_shard = None
+        self.tokens = None
+
+    def __len__(self):
+        return self.ends[-1]
+
+    def __getitem__(self, idx):
+        if idx < 0 or idx >= len(self):
+            raise IndexError(idx)
+
+        shard_idx = bisect_right(self.ends, idx)
+        previous_end = self.ends[shard_idx - 1] if shard_idx else 0
+        start = (idx - previous_end) * self.T
+
+        if shard_idx != self.current_shard:
+            self.tokens = np.load(
+                self.paths[shard_idx], mmap_mode="r"
+            )
+            self.current_shard = shard_idx
+
+        buf = torch.from_numpy(
+            self.tokens[start:start + self.T + 1].astype(np.int64)
+        )
+        return buf[:-1], buf[1:]
